@@ -1,145 +1,44 @@
-<div align=center>
-  <h1>EPUB Translator</h1>
-  <p>
-    <a href="https://github.com/oomol-lab/epub-translator/actions/workflows/build.yml" target="_blank"><img src="https://img.shields.io/github/actions/workflow/status/oomol-lab/epub-translator/build.yml" alt"ci" /></a>
-    <a href="https://pypi.org/project/epub-translator/" target="_blank"><img src="https://img.shields.io/badge/pip_install-epub--translator-blue" alt="pip install epub-translator" /></a>
-    <a href="https://pypi.org/project/epub-translator/" target="_blank"><img src="https://img.shields.io/pypi/v/epub-translator.svg" alt"pypi epub-translator" /></a>
-    <a href="https://pypi.org/project/epub-translator/" target="_blank"><img src="https://img.shields.io/pypi/pyversions/epub-translator.svg" alt="python versions" /></a>
-    <a href="https://github.com/oomol-lab/epub-translator/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/github/license/oomol-lab/epub-translator" alt"license" /></a>
-  </p>
-  <p><a href="https://hub.oomol.com/package/books-translator?open=true" target="_blank"><img src="https://static.oomol.com/assets/button.svg" alt="Open in OOMOL Studio" /></a></p>
-  <p>English | <a href="./README_zh-CN.md">中文</a></p>
-</div>
+**There is nothing change in this ```main``` branch.**
 
-## Introduction
+**Please refer to the ```Simple``` branch (https://github.com/mimi3421/epub-translator_simple/tree/simple).**
 
-epub-translator uses AI big models to automatically translate EPUB e-books, and retains 100% of the original book's format, illustrations, catalog and layout, while generating bilingual comparison versions for easy language learning or international sharing.
+## About
+This branch forks the excellent epub-translator https://github.com/oomol-lab/epub-translator and simplifies the logic of the prompts. As a result, this branch is expected to be with:
 
-Whether you are a developer, language learner, or e-book lover, epub-translator can help you easily overcome language barriers.
+ * More compatibility with the local median size model like Phi4
+ * Lower token consumption to 1/3
+ * Less failed LLM requests
+ * More reasonable output layout
 
-- [x] **Multi-language translation**: Supports translation between mainstream languages ​​such as English, Chinese, Japanese, Spanish, French, and German.
-- [x] **Bilingual comparison**: Generates bilingual EPUBs with top-down comparisons for easy comparison and learning.
-- [x] **Insert prompt words**: Guide AI translation, such as glossary, character name list, etc.
-- [x] **Optional AI model**: Supports mainstream big models such as DeepSeek and ChatGPT.
-- [x] **High-performance parallelism**: AI requests multiple concurrent channels to quickly translate the entire book.
+To use this branch, download the zipped source codes and ```pip install ***.zip```
 
-## Environment
-
-You can call EPUB Translator directly as a library, or use [OOMOL Studio](https://oomol.com/) to run it directly.
-
-### Run with OOMOL Studio
-
-OOMOL uses container technology to directly package the dependencies required by EPUB Translator, and it is ready to use out of the box.
-
-[![](./docs/images/link2youtube.png)](https://www.youtube.com/watch?v=QsAdiskxfXI)
-
-### Call directly as a library
-
-You can also write python code directly and call it as a library. At this time, you need python 3.10 or higher (3.10.16 is recommended).
-
-```shell
-pip install epub-translator
-```
-
-## Quick start
-
-First, construct the `LLM` object that calls the AI ​​Large Language Model.
-
-```python
-from epub_translator import LLM
-
+``` python
 llm = LLM(
-  key="<LLM-API-KEY>", # LLM's API key
-  url="https://api.deepseek.com", # LLM's base URL
-  model="deepseek-chat", # LLM's model name
+  key="ttest", # LLM's API key
+  #url="http://localhost:8080/v1", # LLM's base URL
+  model="phi4", # LLM's model name
   token_encoding="o200k_base", # Local model for calculating the number of tokens
+  temperature=0.8,
+  top_p=0.95,
+    timeout=250.0,
+    retry_times=5,
+    retry_interval_seconds=6.0,
 )
-```
 
-Then, you can call the `translate` method to translate.
-
-```python
-from epub_translator import translate, Language
-
-translate(
-  llm=llm, # llm object constructed in the previous step
-  source_path="/path/to/epub/file", # Original EPUB file to be translated
-  translated_path="/path/to/translated/epub/file", # Path to save the translated EPUB
-  target_language=Language.ENGLISH, # Target language for translation, in this case English.
-)
-```
-
-After calling this method, the translation can be inserted under the original text while retaining the EPUB format.
-
-![](./docs/images/translation.png)
-
-## Function
-
-### Save translation progress
-
-Calling `translate` to translate the entire EPUB e-book takes a long time, and this process may be interrupted for various reasons. For example, when calling LLM, an error is reported and the process is interrupted due to network reasons, or the user can't wait and manually interrupts the process.
-
-EPUB Translator can cache the translated content as a local file, so that when translating the same book, the translation progress can be saved and the progress can be restored from the last translation interruption.
-
-Just configure the `working_path` field when calling `translate` and specify a path to cache the files generated by the translation. The next time it is started, EPUB Translator will try to read the translation progress from this path in advance.
-
-```python
-translate(
-  ..., # other parameters
-  working_path="/path/to/cache/translating/files",
-)
-```
-
-Please note that each call to the `translate` method will write a cache file to the folder where the `workspace_path` is located. This will cause the folder to grow larger and larger. You need to handle it yourself, for example, automatically clear the folder after the translation is successful.
-
-### Monitor translation progress
-
-When calling `translate`, pass a callback function through `report_progress`, and receive a `float` type parameter representing the progress from 0.0 to 1.0, so that the translation progress of the whole book can be monitored.
-
-```python
 from tqdm import tqdm
-from epub_translator import translate
-
-with tqdm(total=1.0, desc="Translating") as bar:
+with tqdm(total=1.0, desc="Translating",ncols=80 ) as bar:
   def refresh_progress(progress: float) -> None:
     bar.n = progress
     bar.refresh()
 
   translate(
-    ..., # other parameters
+    llm=llm, # llm object constructed in the previous step
+    source_path="R:/FUN/trans/mo.epub", # Original EPUB file to be translated
+    translated_path="R:/FUN/trans/mo_out.epub", # Path to save the translated EPUB
+    target_language=Language.SIMPLIFIED_CHINESE, # Target language for translation, in this case English.
+    working_path="R:/FUN/trans",
     report_progress=refresh_progress,
+    max_chunk_tokens_count=768, # No need to be high as this will increase the time for retry
+    max_threads_count= 1,
   )
 ```
-
-### Insert prompt words
-
-Insert prompt words to guide the AI ​​language model on how to translate. For example, you can insert a glossary so that AI can unify the terms when translating. Just add the `user_prompt` field when calling `translate`.
-
-```python
-translate(
-  ..., # other parameters
-  user_prompt='Le Petit Prince should be translated as "Little Prince".',
-)
-```
-
-### Large Language Model Parameters
-
-There are more configuration options when building the `LLM` object.
-
-```python
-llm = LLM(
-  key="<LLM-API-KEY>", # LLM's API key
-  url="https://api.deepseek.com", # LLM's base URL
-  model="deepseek-chat", # LLM's model name
-  token_encoding="o200k_base", # Local model for calculating the number of tokens
-  timeout=60.0, # Request timeout (in seconds)
-  top_p=0.6, # Creativity
-  temperature=0.85, # Temperature
-  retry_times=5, # Retry times. If the request still fails after this number, an error will be reported
-  retry_interval_seconds=6.0, # Retry interval (in seconds)
-)
-```
-
-## Related open source libraries
-
-[PDF Craft](https://github.com/oomol-lab/pdf-craft) can convert PDF files into various other formats. This project will focus on the processing of PDF files of scanned books. Use this library with the scanned PDF books to convert and translate them. For more information, please refer to [Video: Convert scanned PDF books to EPUB format and translate them into bilingual books](https://www.bilibili.com/video/BV1tMQZY5EYY/).
