@@ -2,7 +2,9 @@ from math import ceil
 from typing import Callable, Iterator, Generator
 from pathlib import Path
 from concurrent.futures import as_completed, ThreadPoolExecutor
+from threading import Lock
 from xml.etree.ElementTree import Element
+import re
 
 from ..llm import LLM
 from ..xml import encode_friendly
@@ -15,6 +17,9 @@ from .utils import is_empty, clean_spaces
 
 
 ProgressReporter = Callable[[float], None]
+
+lexi_dict = {}
+lexi_dict_lock = Lock()
 
 def translate(
       llm: LLM,
@@ -149,44 +154,96 @@ def _translate_texts(
   original_text = _normalize_user_input(texts)
   if original_text is None:
     return [""] * len(texts)
+    
+  # create text map
+  original_text_map = []
+  user_data_dict = []
+  # 翻转序列以免语义连续的片段被翻译在一起
+  # 注意在输出结果时再返回来
+  for t in reversed(texts): 
+    #if t.strip() == '':
+    if re.fullmatch(r'^[^\w]*$',t) or re.fullmatch(r'^[\W\d]*$',t): # do not translate the lines with only blanks and number
+      original_text_map.append(t)
+    #elif len(t)<6: # do not translate the short lines
+    #  original_text_map.append(t)
+    else:
+      user_data_dict.append(t.strip())
+      original_text_map.append(f"__trans_id__{str(len(user_data_dict)-1)}")
+      
+  # add a definited normal last line to ensure all short phrases at the end are translated.
+  # No need to remove the line as it is not shown in the original_text_map
+  user_data_dict += ['By the way, John and Rose are couples.']
+  
+  user_data_dict = {str(i) : t.replace("\t"," ") for i,t in enumerate(user_data_dict)}
+  user_data = '\n'.join([f"{i}\t{t}" for i,t in user_data_dict.items()])+'\n'
+  user_data = f"\n``` tsv\n{user_data}\n```\n"
 
-  user_data = original_text
+  # generate lexi
+  global lexi_dict
+  with lexi_dict_lock :
+    # Initiate the lexi_dict
+    #if not lexi_dict:
+    #  lexi_dict['the mom test'] = '妈妈测试'
+      
+    lexi_string = ''
+    # get the lexi match counts
+    all_lexi_count = {k : l for k,x in lexi_dict.items() if ( l:=len(re.findall(re.sub(r'\\(?!n)',r'\\\\',k), user_data.lower(), flags=0))) > 0 }
+    if len(all_lexi_count) > 0:
+      # only export the top 20 lexi
+      the_top = sorted(all_lexi_count.values(),reverse = True)[0:20][-1] # the count at the top 20
+      lexi_string = '\n'.join([f'"{k}":"{lexi_dict[k]}"' for k,v in all_lexi_count.items() if v >= the_top])
+      lexi_string = f'''
+  参考译文：
+  {lexi_string}
+  '''
+  #user_data = original_text
+  user_data = f"{lexi_string}\n\n{user_data}"
+  
   if user_prompt is not None:
-    user_data = f"<rules>{user_prompt}</rules>\n\n{original_text}"
-
-  translated_text = llm.request_text(
+    user_data = f"其他翻译要求：\n{user_prompt}\n\n{user_data}"
+    
+  translated_text = llm.request_text_JSON(
     template_name="translate",
     text_tag="TXT",
     user_data=user_data,
-    parser=lambda r: r,
+    #parser=lambda r: r,
+    parser=lambda r: _parse_translated_response_JSON(r,user_data_dict,original_text_map),
     max_tokens=ceil(texts_tokens * _PLAIN_TEXT_SCALE),
     params={
       "target_language": language_chinese_name(target_language),
       "user_prompt": user_prompt,
     },
   )
-  request_element = Element("request")
 
-  for i, fragment in enumerate(texts):
-    fragment_element = Element("fragment", attrib={
-      "id": str(i + 1),
-    })
-    fragment_element.text = clean_spaces(fragment)
-    request_element.append(fragment_element)
+  return reversed(translated_text)
 
-  request_element_text = encode_friendly(request_element)
-  request_text = f"```XML\n{request_element_text}\n```\n\n{translated_text}"
-
-  return llm.request_xml(
-    template_name="format",
-    user_data=request_text,
-    max_tokens=ceil(texts_tokens * _XML_TEXT_SCALE),
-    parser=lambda r: _parse_translated_response(r, len(texts)),
-    params={
-      "target_language": language_chinese_name(target_language),
-    },
-  )
-
+def _parse_translated_response_JSON(res_par : dict, user_data_dict : dict, original_text_map : list[str]) -> list[str]:
+  if not ('data' in res_par.keys() and 'lexi' in res_par.keys()) :
+    raise ValueError(f"JSON parse error: data and lext not exist.\n{str(res_par)}")
+    
+  # deal with data
+  if len(res_par['data'].keys() ^ user_data_dict.keys()) != 0: # not all key match, some texts missed
+      raise ValueError(f"JSON parse error: Text ID not match. Some texts missed.\n{str(res_par)}\n{str(user_data_dict)}\n{str(original_text_map)}")
+        
+  # deal with lexi
+  try:
+    global lexi_dict
+    for k,x in res_par['lexi'].items():
+      #if k == x or re.fullmatch(r'^[^\w]*$',k) or re.fullmatch(r'^[^\w]*$',x):
+      if re.fullmatch(r'^[^\w]*$',k) or re.fullmatch(r'^[^\w]*$',x):
+        # The lexi didnt' translate anything
+        continue
+      k = k.strip().lower()
+      with lexi_dict_lock:
+        if k not in lexi_dict.keys():
+            lexi_dict[k] = x.strip()
+  except:
+    # just do nothing if the lexi parse error
+    pass
+        
+  # output the translated texts or the blank texts
+  return [ res_par['data'][t] if (t[:12]=='__trans_id__' and t[12:] in res_par['data'].keys()) else t for t in original_text_map]
+  
 def _parse_translated_response(resp_element: Element, sources_count: int) -> list[str]:
   fragments: list[str | None] = [None] * sources_count
   for fragment_element in resp_element:
