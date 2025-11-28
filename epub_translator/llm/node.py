@@ -16,6 +16,8 @@ from ..xml import decode_friendly, encode_friendly
 from .increasable import Increasable
 from .executor import LLMExecutor
 
+import json
+import re
 
 R = TypeVar("R")
 
@@ -98,7 +100,36 @@ class LLM:
       parser=parse_response,
       max_tokens=max_tokens,
     )
+  def request_text_JSON(
+      self,
+      template_name: str,
+      text_tag: str,
+      user_data: Element | str,
+      parser: Callable[[str], R],
+      max_tokens: int | None = None,
+      params: dict[str, Any] | None = None,
+    ) -> R:
 
+    if params is None:
+      params = {}
+
+    def parse_response(response: str) -> R: # in JSON
+      try:
+        res_par = re.findall(r'{.*}',response,re.S)[0]
+        res_par = re.sub(r'\\(?![n"])',r'\\\\',res_par)
+        res_par = re.sub(r'(?<!\\)%',r'\\\\%',res_par)
+        res_par = json.loads(res_par,strict = False)
+      except json.decoder.JSONDecodeError as e:
+        raise ValueError(f"JSON parse error: \n{str(e)}\n{str(response)}\n{str(res_par)}")
+      except IndexError as e:
+        raise ValueError(f"JSON parse error (Not JSON object): \n{str(e)}\n{str(response)}")
+      return parser(res_par) # response is a JSON parsed dict object
+
+    return self._executor.request(
+      input=self._create_input(template_name, user_data, params),
+      parser=parse_response,
+      max_tokens=max_tokens,
+    )
   def request_xml(
         self,
         template_name: str,
