@@ -31,15 +31,12 @@ def write_texts(root: Element, texts: Iterable[str | Iterable[str] | None], appe
 
 def _write_dom(parent: Element, origin: Element, text: str, append: bool):
   if append:
-    appended = Element(origin.tag, {**origin.attrib})
+    br = Element('br')
     for index, child in enumerate(parent):
       if child == origin:
-        parent.insert(index + 1, appended)
+        child.append(br)
+        br.tail = text
         break
-    appended.attrib.pop("id", None)
-    appended.text = text
-    appended.tail = origin.tail
-    origin.tail = None
   else:
     for child in origin:
       origin.remove(child)
