@@ -17,7 +17,7 @@ _IGNORE_TAGS = (
 )
 
 _TEXT_LEAF_TAGS = (
-  "a", "b", "br", "hr", "span", "em", "strong", "label",
+  "a", "b", "br", "hr", "span", "em", "strong", "label","i", "u", "del", "sub", "sup"
 )
 
 def search_texts(element: Element, parent: Element | None = None) -> Generator[TextDescription, None, None]:
