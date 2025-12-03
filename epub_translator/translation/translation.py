@@ -15,6 +15,9 @@ from .splitter import split_into_chunks
 from .chunk import match_fragments, Chunk
 from .utils import is_empty, clean_spaces
 
+from collections import OrderedDict
+#from jellyfish import damerau_levenshtein_distance
+
 
 ProgressReporter = Callable[[float], None]
 
@@ -172,9 +175,10 @@ def _translate_texts(
       
   # add a definited normal last line to ensure all short phrases at the end are translated.
   # No need to remove the line as it is not shown in the original_text_map
-  user_data_dict += ['By the way, John and Rose are couples.']
+  #user_data_dict += ['By the way, John and Rose are couples.']
   
-  user_data_dict = {str(i) : t.replace("\t"," ") for i,t in enumerate(user_data_dict)}
+  #user_data_dict = {str(i) : t.replace("\t"," ") for i,t in enumerate(user_data_dict)}
+  user_data_dict = OrderedDict([(str(i) , t.replace("\t"," ")) for i,t in enumerate(user_data_dict)])
   user_data = '\n'.join([f"{i}\t{t}" for i,t in user_data_dict.items()])+'\n'
   user_data = f"\n``` tsv\n{user_data}\n```\n"
 
@@ -193,37 +197,168 @@ def _translate_texts(
       the_top = sorted(all_lexi_count.values(),reverse = True)[0:20][-1] # the count at the top 20
       lexi_string = '\n'.join([f'"{k}":"{lexi_dict[k]}"' for k,v in all_lexi_count.items() if v >= the_top])
       lexi_string = f'''
-  参考译文：
-  {lexi_string}
-  '''
+参考译文：
+{lexi_string}
+'''
   #user_data = original_text
   user_data = f"{lexi_string}\n\n{user_data}"
   
   if user_prompt is not None:
     user_data = f"其他翻译要求：\n{user_prompt}\n\n{user_data}"
     
-  translated_text = llm.request_text_JSON(
-    template_name="translate",
-    text_tag="TXT",
-    user_data=user_data,
-    #parser=lambda r: r,
-    parser=lambda r: _parse_translated_response_JSON(r,user_data_dict,original_text_map),
-    max_tokens=ceil(texts_tokens * _PLAIN_TEXT_SCALE),
-    params={
-      "target_language": language_chinese_name(target_language),
-      "user_prompt": user_prompt,
-    },
-  )
+  try:
+    translated_text = llm.request_text_JSON(
+      template_name="translate",
+      text_tag="TXT",
+      user_data=user_data,
+      #parser=lambda r: r,
+      parser=lambda r: _parse_translated_response_JSON(r,user_data_dict,original_text_map,repair_mode=False),
+      max_tokens=ceil(texts_tokens * _PLAIN_TEXT_SCALE),
+      params={
+        "target_language": language_chinese_name(target_language),
+        "user_prompt": user_prompt,
+      },
+    )
+    translated_text.reverse()
+  except ValueError as e: # all trails failed and need a repair
+    if e.args[0].startswith('JSON parse error: Text ID not match. Some texts missed.'):
+      try:
+        # normal order of text is needed in the repair mode, so generate another user prompt in normal order
+        # no need to care about the original text id as there is no id in the response
+        # the response should be reversed first in _parse_translated_response_JSON(..., repair_mode=True)
+        user_data = reversed(list(user_data_dict.values()))
+        user_data = '\n'.join([f"{i}\t{t}" for i,t in enumerate(user_data)])+'\n'
+        user_data = f"\n``` tsv\n{user_data}\n```\n"
+        
+        user_data = f"{lexi_string}\n\n{user_data}"
+        
+        if user_prompt is not None:
+          user_data = f"其他翻译要求：\n{user_prompt}\n\n{user_data}"
+        
+        translated_text = llm.request_text_JSON(
+          template_name="translate_repair",
+          text_tag="TXT",
+          user_data=user_data,
+          parser=lambda r: _parse_translated_response_JSON(r,user_data_dict,original_text_map,repair_mode=True),
+          max_tokens=ceil(texts_tokens * _PLAIN_TEXT_SCALE),
+          params={
+            "target_language": language_chinese_name(target_language),
+            "user_prompt": user_prompt,
+          },
+        )
+        translated_text.reverse()
+      except ValueError: # repair is failed
+        translated_text = [ '[NO TRANSLATION B1]' for x in texts]
+        #raise ValueError('FAILED1') #debug
+    else: # Other value error, return the original texts
+      translated_text = [ '[NO TRANSLATION B2]' for x in texts]
+      #raise ValueError('FAILED2') #debug
+    
+  return translated_text
 
-  return reversed(translated_text)
-
-def _parse_translated_response_JSON(res_par : dict, user_data_dict : dict, original_text_map : list[str]) -> list[str]:
+def _parse_translated_response_JSON(res_par : OrderedDict, user_data_dict : OrderedDict, original_text_map : list[str], repair_mode : bool = False) -> list[str] | None:
   if not ('data' in res_par.keys() and 'lexi' in res_par.keys()) :
     raise ValueError(f"JSON parse error: data and lext not exist.\n{str(res_par)}")
     
+  def which_mins(lst):
+      the_min = min(lst)
+      return [i for i, x in enumerate(lst) if x == the_min]
+  def damerau_levenshtein_distance(first_string: str, second_string: str) -> int:
+    # Create a dynamic programming matrix to store the distances
+    dp_matrix = [[0] * (len(second_string) + 1) for _ in range(len(first_string) + 1)]
+
+    # Initialize the matrix
+    for i in range(len(first_string) + 1):
+      dp_matrix[i][0] = i
+    for j in range(len(second_string) + 1):
+      dp_matrix[0][j] = j
+
+    # Fill the matrix
+    for i, first_char in enumerate(first_string, start=1):
+      for j, second_char in enumerate(second_string, start=1):
+        cost = int(first_char != second_char)
+
+        dp_matrix[i][j] = min(
+          dp_matrix[i - 1][j] + 1,  # Deletion
+          dp_matrix[i][j - 1] + 1,  # Insertion
+          dp_matrix[i - 1][j - 1] + cost,  # Substitution
+        )
+
+        if (
+          i > 1
+          and j > 1
+          and first_string[i - 1] == second_string[j - 2]
+          and first_string[i - 2] == second_string[j - 1]
+        ):
+          # Transposition
+          dp_matrix[i][j] = min(dp_matrix[i][j], dp_matrix[i - 2][j - 2] + cost)
+
+    return dp_matrix[-1][-1]
+    
   # deal with data
-  if len(res_par['data'].keys() ^ user_data_dict.keys()) != 0: # not all key match, some texts missed
-      raise ValueError(f"JSON parse error: Text ID not match. Some texts missed.\n{str(res_par)}\n{str(user_data_dict)}\n{str(original_text_map)}")
+  if not repair_mode: # res_par['data'] ~ '0':'abc'
+    #raise ValueError(f"JSON parse error: Text ID not match. Some texts missed.") #debug
+    if len(res_par['data'].keys() ^ user_data_dict.keys()) != 0: # not all key match, some texts missed
+        raise ValueError(f"JSON parse error: Text ID not match. Some texts missed.\n{str(res_par)}\n{str(user_data_dict)}\n{str(original_text_map)}")
+        #return None # return nothing
+  else: # res_par['data'] ~ 'abc':'abc'
+    # Adjust the key mapping
+    a = list(user_data_dict.values())
+    b = list(res_par['data'].keys())
+    c = list(res_par['data'].values()) # the translation
+    
+    a.reverse() # reverse the result to match the order in user_data_dict
+    
+    # all nearest keys of b to each key of a
+    a_to_nearest_b_all = [which_mins([damerau_levenshtein_distance(va, vb) for vb in b]) for va in a]
+     
+    ilast_max_b = -1
+    a_to_nearest_b = [
+        (ib[0] if len(ib) == 1 
+         else max([x for x in ib if x < ilast_max_b] or ib))
+        for ib in a_to_nearest_b_all
+    ]
+    #print('\n'.join([str(x) for x in a_to_nearest_b]))
+    a_to_nearest_b_selected = a_to_nearest_b.copy()
+    # first item always 0
+    a_to_nearest_b_selected[0] = 0
+    # correct the single step error
+    for i in range(1,len(a_to_nearest_b_selected)-1):
+        if a_to_nearest_b_selected[i+1] - a_to_nearest_b_selected[i-1] == 2 and a_to_nearest_b_selected[i+1] - a_to_nearest_b_selected[i] != 1:
+            a_to_nearest_b_selected[i] = a_to_nearest_b_selected[i-1] + 1
+    # fetch the continuous anchor
+    a_to_nearest_b_anchor = [-1 for _ in a_to_nearest_b_selected] # [ -n: negative leftmost anchor value, n: anchor diff to reference, 1: anchor]
+    for i in range(0,len(a_to_nearest_b_selected)-1):
+        if a_to_nearest_b_selected[i+1] - a_to_nearest_b_selected[i] == 1:
+            #a_to_nearest_b_anchor[i] = a_to_nearest_b_selected[i] - i
+            #a_to_nearest_b_anchor[i+1] = a_to_nearest_b_selected[i] - i
+            a_to_nearest_b_anchor[i] = 1
+            a_to_nearest_b_anchor[i+1] = 1
+    left_anchor = max(a_to_nearest_b_selected)
+    for i in range(len(a_to_nearest_b_selected)-1,-1,-1):
+        if a_to_nearest_b_anchor[i]>=0:
+            left_anchor = a_to_nearest_b_selected[i]
+        else:
+            a_to_nearest_b_anchor[i] = -left_anchor
+    # previous item should be smaller than the next anchor, or be the same as the anchor
+    for i in range(0,len(a_to_nearest_b_selected)):
+        if a_to_nearest_b_selected[i] > -a_to_nearest_b_anchor[i] > 0:
+            a_to_nearest_b_selected[i] = -a_to_nearest_b_anchor[i]
+    # fill the skipped items
+    a_to_nearest_b_selected = [[x] for x in a_to_nearest_b_selected]
+    for i in range(1,len(a_to_nearest_b_selected)):
+        if a_to_nearest_b_selected[i][0] <= max(a_to_nearest_b_selected[i-1]):
+            a_to_nearest_b_selected[i] = a_to_nearest_b_selected[i-1] + a_to_nearest_b_selected[i]
+            a_to_nearest_b_selected[i-1] = []
+        else:
+            a_to_nearest_b_selected[i] = list(range(max(a_to_nearest_b_selected[i-1])+1,a_to_nearest_b_selected[i][0]+1))
+    # add remained items to the end
+    a_to_nearest_b_selected[-1] = list(range(min(a_to_nearest_b_selected[-1]),len(b)))
+    
+    a_to_nearest_b_selected.reverse() # reverse the result to match the order in user_data_dict
+    
+    # merge the result
+    res_par['data'] = OrderedDict([(str(ia),' '.join([c[x] for x in va])) for ia,va in enumerate(a_to_nearest_b_selected)])
         
   # deal with lexi
   try:
@@ -242,7 +377,7 @@ def _parse_translated_response_JSON(res_par : dict, user_data_dict : dict, origi
     pass
         
   # output the translated texts or the blank texts
-  return [ res_par['data'][t] if (t[:12]=='__trans_id__' and t[12:] in res_par['data'].keys()) else t for t in original_text_map]
+  return [ res_par['data'][t[12:]] if (t[:12]=='__trans_id__' and t[12:] in res_par['data'].keys()) else t for t in original_text_map]
   
 def _parse_translated_response(resp_element: Element, sources_count: int) -> list[str]:
   fragments: list[str | None] = [None] * sources_count
