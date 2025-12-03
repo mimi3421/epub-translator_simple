@@ -18,6 +18,7 @@ from .executor import LLMExecutor
 
 import json
 import re
+from collections import OrderedDict
 
 R = TypeVar("R")
 
@@ -118,7 +119,8 @@ class LLM:
         res_par = re.findall(r'{.*}',response,re.S)[0]
         res_par = re.sub(r'\\(?![n"])',r'\\\\',res_par)
         res_par = re.sub(r'(?<!\\)%',r'\\\\%',res_par)
-        res_par = json.loads(res_par,strict = False)
+        #res_par = json.loads(res_par,strict = False)
+        res_par = json.loads(res_par,strict = False, object_pairs_hook=OrderedDict)
       except json.decoder.JSONDecodeError as e:
         raise ValueError(f"JSON parse error: \n{str(e)}\n{str(response)}\n{str(res_par)}")
       except IndexError as e:
