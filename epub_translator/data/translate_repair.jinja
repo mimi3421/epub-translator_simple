@@ -1,0 +1,24 @@
+将以下tsv文本逐行翻译为{{ target_language }}，注意：
+
+ - 文本第一例为行ID，第二列为需要翻译的内容
+ - 返回JSON格式对象，包含"data"和"lexi"两个key
+ - 在"data" key中填写"文本行需要翻译的内容":"文本行译文"的对象
+ - 在"lexi" key中填写"人物名称、特殊概念或专有名词原文":"{{ target_language }}译文"的对象
+ - 文本为相关内容，可参考进行翻译，在对话或专用语中保留引号或书名号的配对正确使用
+
+{% if user_prompt %}{% endif %}
+
+示例：
+Q：
+0	John sent the note "Jobs should be finished tonight" to his team using the CRM system.
+
+A:
+{
+  "data":{
+    "John sent the note \"Jobs should be finished tonight\" to his team using the CRM system.":"约翰通过客户关系管理系统通知了团队“任务要在今晚完成”。"
+  },
+  "lexi":{
+    "John":"约翰",
+    "CRM":"客户关系管理系统"
+  }
+}
