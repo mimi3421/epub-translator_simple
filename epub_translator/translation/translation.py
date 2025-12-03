@@ -264,6 +264,7 @@ def _parse_translated_response_JSON(res_par : OrderedDict, user_data_dict : Orde
       the_min = min(lst)
       return [i for i, x in enumerate(lst) if x == the_min]
   def damerau_levenshtein_distance(first_string: str, second_string: str) -> int:
+    # https://github.com/TheAlgorithms/Python/blob/master/strings/damerau_levenshtein_distance.py
     # Create a dynamic programming matrix to store the distances
     dp_matrix = [[0] * (len(second_string) + 1) for _ in range(len(first_string) + 1)]
 
